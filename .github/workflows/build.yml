@@ -36,23 +36,29 @@ jobs:
             libffi-dev \
             libssl-dev
 
-      - name: Install Buildozer and Cython
+      - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install Cython==0.29.33
           python -m pip install buildozer
           python -m pip install pillow
 
-      - name: Accept Android SDK Licenses
+      - name: Fix Buildozer Spec
         run: |
-          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
-          yes | buildozer android update 2>/dev/null || true
+          if grep -q "^source.dir" buildozer.spec; then
+            echo "source.dir already exists"
+          else
+            sed -i '/^\[app\]/a source.dir = .' buildozer.spec
+          fi
 
-      - name: Build APK with Buildozer
+          echo "===== buildozer.spec ====="
+          cat buildozer.spec
+
+      - name: Build APK
         run: |
           buildozer -v android debug
 
-      - name: Upload APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: package-apk
