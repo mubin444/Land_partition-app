@@ -11,17 +11,17 @@ jobs:
 
     steps:
 
-      # 1. Checkout
+      # 1. Checkout source code
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Python
+      # 2. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 3. Java 17
+      # 3. Setup Java 17
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -35,9 +35,12 @@ jobs:
 
           sudo apt-get install -y \
             git \
+            wget \
+            curl \
             zip \
             unzip \
             autoconf \
+            automake \
             libtool \
             pkg-config \
             zlib1g-dev \
@@ -48,7 +51,13 @@ jobs:
             libltdl-dev \
             openjdk-17-jdk
 
-      # 5. Install Buildozer
+      # 5. Check Java
+      - name: Check Java
+        run: |
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+
+      # 6. Install Buildozer and Cython
       - name: Install Buildozer and Cython
         run: |
           python -m pip install --upgrade pip
@@ -56,8 +65,11 @@ jobs:
           pip install buildozer
           pip install pillow
 
-      # 6. Fix source.dir temporarily
-      #    This does NOT permanently change buildozer.spec
+          buildozer --version
+
+      # 7. Fix buildozer.spec temporarily
+      #    This change exists only during this GitHub Actions run.
+      #    Your repository buildozer.spec is NOT permanently changed.
       - name: Fix Buildozer Spec Temporarily
         run: |
           if grep -q "^source.dir" buildozer.spec; then
@@ -69,77 +81,164 @@ jobs:
           echo "===== buildozer.spec ====="
           cat buildozer.spec
 
-      # 7. Prepare Buildozer Android SDK
+      # 8. Prepare Android SDK directory
       - name: Prepare Android SDK
         run: |
-          mkdir -p "$HOME/.buildozer/android/platform/android-sdk"
-
           export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+
+          mkdir -p "$ANDROID_SDK_ROOT"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
 
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
 
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-
-      # 8. Install Android command line tools
+      # 9. Install Android Command Line Tools
       - name: Install Android Command Line Tools
         run: |
           export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-          export CMDLINE_TOOLS="$ANDROID_SDK_ROOT/cmdline-tools"
 
           cd /tmp
 
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          echo "Downloading Android Command Line Tools..."
 
-          rm -rf "$CMDLINE_TOOLS/latest"
-          mkdir -p "$CMDLINE_TOOLS/latest"
+          wget -q \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+            -O android-cmdline-tools.zip
 
-          unzip -q commandlinetools-linux-11076708_latest.zip \
-            -d "$CMDLINE_TOOLS/latest"
+          echo "Download completed."
 
-          if [ -d "$CMDLINE_TOOLS/latest/cmdline-tools" ]; then
-            mv "$CMDLINE_TOOLS/latest/cmdline-tools/"* "$CMDLINE_TOOLS/latest/"
-            rmdir "$CMDLINE_TOOLS/latest/cmdline-tools"
+          rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
+          unzip -q android-cmdline-tools.zip \
+            -d "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
+          # Fix nested cmdline-tools directory
+          if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools" ]; then
+            mv "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/"* \
+               "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+
+            rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools"
           fi
 
-          echo "$CMDLINE_TOOLS/latest/bin" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "===== Android Command Line Tools ====="
 
-          sdkmanager --version
+          ls -la "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/"
 
-      # 9. Install Build Tools, Platform and AIDL
+          echo "===== sdkmanager ====="
+
+          ls -l \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          echo "===== sdkmanager version ====="
+
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --version
+
+      # 10. Install Android SDK + Build Tools + AIDL
       - name: Install Android SDK Components
         run: |
           export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
 
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
+          echo "SDKMANAGER:"
+          echo "$SDKMANAGER"
+
+          echo "===== Accept licenses ====="
+
+          yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROID_SDK_ROOT" \
+            --licenses || true
+
+          echo "===== Installing SDK components ====="
+
+          "$SDKMANAGER" \
+            --sdk_root="$ANDROID_SDK_ROOT" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+          echo "===== Accept licenses again ====="
+
+          yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROID_SDK_ROOT" \
+            --licenses || true
+
+          echo "===== Installed SDK ====="
+
+          ls -la "$ANDROID_SDK_ROOT"
+
+          echo "===== Build Tools ====="
+
+          ls -la "$ANDROID_SDK_ROOT/build-tools/"
+
+          echo "===== Build Tools 35.0.0 ====="
+
+          ls -la "$ANDROID_SDK_ROOT/build-tools/35.0.0/"
+
+          echo "===== AIDL ====="
+
+          ls -la "$ANDROID_SDK_ROOT/build-tools/35.0.0/aidl"
+
+      # 11. Export Android SDK paths
+      - name: Configure Android Environment
+        run: |
+          export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_PATH"
+
+          echo "===== Environment ====="
+
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+      # 12. Verify Android tools
+      - name: Verify Android Tools
+        run: |
+          echo "===== Java ====="
+          java -version
+
+          echo "===== sdkmanager ====="
+          sdkmanager --version
+
+          echo "===== adb ====="
+          adb version || true
+
+          echo "===== aapt ====="
+          aapt version || true
+
+          echo "===== aidl ====="
+          aidl --version
 
           echo "===== Build Tools ====="
           ls -la "$ANDROID_SDK_ROOT/build-tools/35.0.0/"
 
-          echo "===== AIDL ====="
-          ls -la "$ANDROID_SDK_ROOT/build-tools/35.0.0/aidl"
-
-      # 10. Show Java version
-      - name: Check Java
-        run: |
-          java -version
-          echo "JAVA_HOME=$JAVA_HOME"
-
-      # 11. Build APK
+      # 13. Build APK
       - name: Build APK with Buildozer
         run: |
+          echo "===== Starting Buildozer ====="
+
           buildozer -v android debug
 
-      # 12. Upload APK
+      # 14. Find APK
+      - name: Find APK
+        if: success()
+        run: |
+          echo "===== APK files ====="
+
+          find . -type f -name "*.apk" -print
+
+          echo "===== bin directory ====="
+
+          ls -lah bin/ || true
+
+      # 15. Upload APK
       - name: Upload APK Artifact
         if: success()
         uses: actions/upload-artifact@v4
