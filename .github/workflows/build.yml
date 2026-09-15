@@ -2,7 +2,7 @@ name: Build Kivy APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -10,40 +10,55 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+
+      # 1. Checkout
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # 2. Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install System Dependencies
+      # 3. Java 17
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # 4. Install Linux dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             zip \
             unzip \
-            openjdk-17-jdk \
             autoconf \
-            automake \
             libtool \
             pkg-config \
             zlib1g-dev \
             libncurses5-dev \
             libncursesw5-dev \
             libffi-dev \
-            libssl-dev
+            libssl-dev \
+            libltdl-dev \
+            openjdk-17-jdk
 
-      - name: Install Buildozer
+      # 5. Install Buildozer
+      - name: Install Buildozer and Cython
         run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install Cython==0.29.33
-          python -m pip install buildozer
-          python -m pip install pillow
+          python -m pip install --upgrade pip
+          pip install "Cython==0.29.33"
+          pip install buildozer
+          pip install pillow
 
-      - name: Fix Buildozer Spec
+      # 6. Fix source.dir temporarily
+      #    This does NOT permanently change buildozer.spec
+      - name: Fix Buildozer Spec Temporarily
         run: |
           if grep -q "^source.dir" buildozer.spec; then
             echo "source.dir already exists"
@@ -54,12 +69,81 @@ jobs:
           echo "===== buildozer.spec ====="
           cat buildozer.spec
 
-      - name: Build APK
+      # 7. Prepare Buildozer Android SDK
+      - name: Prepare Android SDK
+        run: |
+          mkdir -p "$HOME/.buildozer/android/platform/android-sdk"
+
+          export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+
+      # 8. Install Android command line tools
+      - name: Install Android Command Line Tools
+        run: |
+          export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+          export CMDLINE_TOOLS="$ANDROID_SDK_ROOT/cmdline-tools"
+
+          cd /tmp
+
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+
+          rm -rf "$CMDLINE_TOOLS/latest"
+          mkdir -p "$CMDLINE_TOOLS/latest"
+
+          unzip -q commandlinetools-linux-11076708_latest.zip \
+            -d "$CMDLINE_TOOLS/latest"
+
+          if [ -d "$CMDLINE_TOOLS/latest/cmdline-tools" ]; then
+            mv "$CMDLINE_TOOLS/latest/cmdline-tools/"* "$CMDLINE_TOOLS/latest/"
+            rmdir "$CMDLINE_TOOLS/latest/cmdline-tools"
+          fi
+
+          echo "$CMDLINE_TOOLS/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+          sdkmanager --version
+
+      # 9. Install Build Tools, Platform and AIDL
+      - name: Install Android SDK Components
+        run: |
+          export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+
+          echo "===== Build Tools ====="
+          ls -la "$ANDROID_SDK_ROOT/build-tools/35.0.0/"
+
+          echo "===== AIDL ====="
+          ls -la "$ANDROID_SDK_ROOT/build-tools/35.0.0/aidl"
+
+      # 10. Show Java version
+      - name: Check Java
+        run: |
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+
+      # 11. Build APK
+      - name: Build APK with Buildozer
         run: |
           buildozer -v android debug
 
-      - name: Upload APK
+      # 12. Upload APK
+      - name: Upload APK Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: package-apk
           path: bin/*.apk
+          if-no-files-found: error
